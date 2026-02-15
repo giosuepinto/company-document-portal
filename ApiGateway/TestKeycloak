@@ -1,0 +1,5 @@
+Test 1: Accesso Diretto (Deve Fallire ❌)
+http://localhost:8082/api/v1/files
+
+Test 2: Dovresti vedere una risposta JSON
+http://localhost:8080/api/v1/files

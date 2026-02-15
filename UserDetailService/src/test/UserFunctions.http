@@ -1,0 +1,199 @@
+### Configurazione Variabili Globali
+@gateway = http://localhost:8080
+@keycloak = http://localhost:9090
+@realm = file-management
+@client_id = gateway-client
+# INSERISCI QUI SOTTO IL TUO CLIENT SECRET COPIATO DA KEYCLOAK
+@client_secret = j22DQRgv8U3IkxAz1vAU41swQRnFDQ4B
+
+# DEVI INSERIRE QUI IL UUID DEL TUO UTENTE ADMIN (Alice)
+# Lo trovi nel claim 'sub' del suo JWT.
+@alice_user_id = c3031b73-7560-4655-a485-5af13621ffb8
+# DEVI INSERIRE QUI IL UUID DEL TUO UTENTE STAFF (Bob)
+@bob_user_id = 24975d6a-3a35-477a-bffd-15cc83d74f30
+
+
+
+### --------------------------------------------------------------------
+### 1. AUTENTICAZIONE ALICE (Ruolo: ADMIN)
+### --------------------------------------------------------------------
+POST {{keycloak}}/realms/{{realm}}/protocol/openid-connect/token
+Content-Type: application/x-www-form-urlencoded
+
+client_id={{client_id}}&client_secret={{client_secret}}&username=admin&password=admin&grant_type=password
+
+> {%
+    client.global.set("alice_token", response.body.access_token);
+    client.log("✅ Alice Token ottenuto");
+%}
+
+### --------------------------------------------------------------------
+### 2. AUTENTICAZIONE BOB (Ruolo: STAFF/USER)
+### --------------------------------------------------------------------
+POST {{keycloak}}/realms/{{realm}}/protocol/openid-connect/token
+Content-Type: application/x-www-form-urlencoded
+
+client_id={{client_id}}&client_secret={{client_secret}}&username=staff&password=staff&grant_type=password
+
+> {%
+    client.global.set("bob_token", response.body.access_token);
+    client.log("✅ Bob Token ottenuto");
+%}
+
+### --------------------------------------------------------------------
+### 3. TEST ACL: GET ME (Verifica l'ACL Implicita e JIT Provisioning)
+### --------------------------------------------------------------------
+
+### 3-A. Alice accede a /me (Deve restituire 200 OK)
+GET {{gateway}}/api/v1/users/me
+Authorization: Bearer {{alice_token}}
+
+> {%
+    client.test("Alice accede a /me (200 OK)", function() {
+        client.assert(response.status === 200, "Expected 200 OK but got " + response.status);
+    });
+%}
+
+### 3-B. Bob accede a /me (Deve restituire 200 OK)
+GET {{gateway}}/api/v1/users/me
+Authorization: Bearer {{bob_token}}
+
+> {%
+    client.test("Bob accede a /me (200 OK)", function() {
+        client.assert(response.status === 200, "Expected 200 OK but got " + response.status);
+    });
+%}
+
+### --------------------------------------------------------------------
+### 4. TEST RBAC: Lettura (GET)
+### --------------------------------------------------------------------
+
+### 4-A. Alice (Admin) accede alla lista (Deve restituire 200 OK)
+GET {{gateway}}/api/v1/users
+Authorization: Bearer {{alice_token}}
+
+> {%
+    client.test("Admin può listare gli utenti (200 OK)", function() {
+        client.assert(response.status === 200, "Expected 200 OK but got " + response.status);
+    });
+%}
+
+### 4-B. Bob (Staff) accede alla lista (Deve fallire con 403 Forbidden)
+GET {{gateway}}/api/v1/users
+Authorization: Bearer {{bob_token}}
+
+> {%
+    client.test("Staff NON può listare gli utenti (403 Forbidden)", function() {
+        client.assert(response.status === 403, "Expected 403 Forbidden but got " + response.status);
+    });
+%}
+
+### 4-C. Alice (Admin) accede per ID (Deve restituire 200 OK)
+GET {{gateway}}/api/v1/users/{{alice_user_id}}
+Authorization: Bearer {{alice_token}}
+
+> {%
+    client.test("Admin può accedere a utente specifico per ID (200 OK)", function() {
+        client.assert(response.status === 200, "Expected 200 OK but got " + response.status);
+    });
+%}
+
+### --------------------------------------------------------------------
+### 5. TEST CRUD PROTETTO: Creazione (POST)
+### --------------------------------------------------------------------
+
+### 5-A. Crea nuovo utente (Alice - Admin)
+POST {{gateway}}/api/v1/users
+Authorization: Bearer {{alice_token}}
+Content-Type: application/json
+
+{
+  "id": "A1B2C3D4-1111-2222-3333-444444444444",
+  "fullName": "Test User Provisioning",
+  "email": "test.user.provisioning@temp.it",
+  "organization": "Test Org",
+  "role": "STAFF",
+  "storageQuota": 512,
+  "department": "TEST_DEPT"
+}
+
+> {%
+    client.test("Creazione Utente (201 Created)", function() {
+        client.assert(response.status === 201, "Expected 201 Created but got " + response.status);
+    });
+    // Salva l'ID creato (deve corrispondere all'ID fornito nel payload)
+    client.global.set("test_user_id", response.body.id);
+    client.log("ID utente creato: " + response.body.id);
+%}
+
+### 5-B. Creazione fallisce (Bob - Staff)
+POST {{gateway}}/api/v1/users
+Authorization: Bearer {{bob_token}}
+Content-Type: application/json
+
+{
+  "id": "F00DCAFE-BEEF-CAFE-BEEF-000000000000",
+  "fullName": "Unauthorized User",
+  "email": "unauth.user@temp.it",
+  "organization": "Forbidden Org",
+  "role": "STAFF",
+  "storageQuota": 10
+}
+
+> {%
+    client.test("Staff NON può creare utenti (403 Forbidden)", function() {
+        client.assert(response.status === 403, "Expected 403 Forbidden but got " + response.status);
+    });
+%}
+
+### --------------------------------------------------------------------
+### 6. TEST CRUD PROTETTO: Aggiornamento (PUT)
+### --------------------------------------------------------------------
+
+### 6-A. Aggiorna l'utente appena creato (Alice - Admin)
+PUT {{gateway}}/api/v1/users/{{test_user_id}}
+Authorization: Bearer {{alice_token}}
+Content-Type: application/json
+
+{
+  "id": "{{test_user_id}}",
+  "fullName": "Test User Updated",
+  "email": "test.user.updated@temp.it",
+  "organization": "Updated Org",
+  "role": "MANAGER",
+  "storageQuota": 2048,
+  "department": "UPDATED_DEPT"
+}
+
+> {%
+    client.test("Aggiornamento Utente (200 OK)", function() {
+        client.assert(response.status === 200, "Expected 200 OK but got " + response.status);
+    });
+    client.test("Verifica aggiornamento email", function() {
+        client.assert(response.body.email === "test.user.updated@temp.it", "Email non aggiornata correttamente");
+    });
+%}
+
+### --------------------------------------------------------------------
+### 7. TEST CRUD PROTETTO: Cancellazione (DELETE)
+### --------------------------------------------------------------------
+
+### 7-A. Cancella l'utente (Alice - Admin)
+DELETE {{gateway}}/api/v1/users/{{test_user_id}}
+Authorization: Bearer {{alice_token}}
+
+> {%
+    client.test("Cancellazione Utente (204 No Content)", function() {
+        client.assert(response.status === 204, "Expected 204 No Content but got " + response.status);
+    });
+%}
+
+### 7-B. Verifica cancellazione (Get By ID fallisce con 404)
+GET {{gateway}}/api/v1/users/{{test_user_id}}
+Authorization: Bearer {{alice_token}}
+
+> {%
+    client.test("Utente non trovato dopo la cancellazione (404 Not Found)", function() {
+        client.assert(response.status === 404, "Expected 404 Not Found but got " + response.status);
+    });
+%}

@@ -1,0 +1,106 @@
+### CONFIGURATION
+@userServiceUrl = http://localhost:8081
+@fileServiceUrl = http://localhost:8080
+@tusEndpoint = http://localhost:8080/uploads
+
+# -------------------------------------------------------
+# STEP 0: Create a User (The Owner)
+# -------------------------------------------------------
+POST {{userServiceUrl}}/api/v1/users
+Content-Type: application/json
+
+{
+  "fullName": "Versioning Test",
+  "email": "versioning@example.com",
+  "organization": "DevTeam",
+  "role": "EDITOR"
+}
+
+> {%
+    client.global.set("ownerId", response.body.id);
+    client.log("Owner Created: " + response.body.id);
+%}
+
+###
+
+# -------------------------------------------------------
+# STEP 1: Upload FILE Version 1 (TUS Protocol)
+# -------------------------------------------------------
+# 1a. Create Upload Session
+POST {{tusEndpoint}}
+Tus-Resumable: 1.0.0
+Upload-Length: 12
+# Metadata Base64: filename "v1.txt", contentType "text/plain"
+Upload-Metadata: filename djEudHh0,contentType dGV4dC9wbGFpbg==
+X-User-Id: {{ownerId}}
+
+> {%
+    var location = response.headers.valueOf("Location");
+    client.global.set("uploadUrl_v1", location);
+    client.log("Upload v1 Location: " + location);
+%}
+
+###
+
+# 1b. Upload Binary Data (v1)
+PATCH {{uploadUrl_v1}}
+Tus-Resumable: 1.0.0
+Upload-Offset: 0
+Content-Type: application/offset+octet-stream
+
+Hello World!
+
+###
+
+# -------------------------------------------------------
+# STEP 2: Find the created File ID
+# -------------------------------------------------------
+# Since TUS doesn't return the File ID, we search for it by filename.
+GET {{fileServiceUrl}}/api/v1/files?filename=v1.txt
+Accept: application/json
+
+> {%
+    // Pick the first file found
+    var fileId = response.body.content[0].id;
+    client.global.set("fileId", fileId);
+    client.log("File Logic ID found: " + fileId);
+%}
+
+###
+
+# -------------------------------------------------------
+# STEP 3: Upload FILE Version 2
+# -------------------------------------------------------
+# 3a. Create Version Upload Session (New Endpoint)
+# We use the ID found in Step 2
+POST {{fileServiceUrl}}/api/v1/files/{{fileId}}/versions
+Tus-Resumable: 1.0.0
+Upload-Length: 15
+# Metadata Base64: filename "v2.txt", contentType "text/plain"
+Upload-Metadata: filename djIudHh0,contentType dGV4dC9wbGFpbg==
+X-User-Id: {{ownerId}}
+
+> {%
+    var location = response.headers.valueOf("Location");
+    client.global.set("uploadUrl_v2", location);
+    client.log("Upload v2 Location: " + location);
+%}
+
+###
+
+# 3b. Upload Binary Data (v2)
+PATCH {{uploadUrl_v2}}
+Tus-Resumable: 1.0.0
+Upload-Offset: 0
+Content-Type: application/offset+octet-stream
+
+Hello Version 2!
+
+###
+
+# -------------------------------------------------------
+# STEP 4: Verify Metadata
+# -------------------------------------------------------
+# We retrieve the file details. The "filename" should now be "v2.txt"
+# and the size should be 15 bytes.
+GET {{fileServiceUrl}}/api/v1/files/{{fileId}}

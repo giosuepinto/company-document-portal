@@ -1,0 +1,199 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: lab05-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+      POSTGRES_MULTIPLE_DATABASES: filesdb:fileuser:filepass, userdb:useruser:userpass
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./init-multiple-databases.sh:/docker-entrypoint-initdb.d/init-multiple-databases.sh
+      - postgres_data:/var/lib/postgresql/data
+    labels:
+      org.springframework.boot.ignore: true
+    restart: unless-stopped
+    networks:
+      - app-network
+    command: ["postgres", "-c", "wal_level=logical"]
+
+  minio:
+    image: quay.io/minio/minio:latest
+    container_name: lab05-minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+    networks:
+      - app-network
+
+  keycloak-db:
+    image: postgres:15
+    environment:
+      POSTGRES_DB: keycloak
+      POSTGRES_USER: keycloak
+      POSTGRES_PASSWORD: password
+    labels:
+      org.springframework.boot.ignore: true
+    volumes:
+      - keycloak_data:/var/lib/postgresql/data
+    networks:
+      - app-network
+
+  keycloak: #Client Secret:j22DQRgv8U3IkxAz1vAU41swQRnFDQ4B Client ID: gateway-client
+    image: quay.io/keycloak/keycloak:26.4
+    command: start-dev --import-realm
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://keycloak-db:5432/keycloak
+      KC_DB_USERNAME: keycloak
+      KC_DB_PASSWORD: password
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: admin
+    ports:
+      - "9090:8080"
+    depends_on:
+      - keycloak-db
+    volumes:
+      - ./keycloak-import:/opt/keycloak/data/import
+    networks:
+      - app-network
+
+  kafka:
+    image: "apache/kafka:3.7.0" # Versione stabile compatibile con Spring Boot attuali
+    hostname: kafka
+    container_name: kafka-broker
+    ports:
+      - "9092:9092"
+    environment:
+      # KRaft settings
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      # Listeners
+      KAFKA_LISTENERS: PLAINTEXT://:29092,CONTROLLER://:9093,PLAINTEXT_HOST://:9092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      # Replication factors (set to 1 for single node dev)
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+    networks:
+      - app-network
+
+  init-kafka:
+    image: "apache/kafka:3.7.0"
+    container_name: init-kafka
+    depends_on:
+      - kafka
+    networks:
+      - app-network
+    # TRUCCO: Mettiamo tutto nell'entrypoint come lista.
+    # Il primo elemento è la shell, il secondo il flag, il terzo è lo script intero.
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        echo "Waiting for Kafka to be ready..."
+        
+        # Loop finché il comando list non ha successo (exit code 0)
+        until /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:29092 --list > /dev/null 2>&1; do
+          echo "Kafka not ready yet. Retrying in 2 seconds..."
+          sleep 2
+        done
+        
+        echo "Kafka is ready! Creating topic..."
+        
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:29092 --create --if-not-exists --topic file-upload.completed --partitions 1 --replication-factor 1
+        
+        echo "Topic created successfully."
+
+  # Optional: UI per visualizzare i messaggi Kafka (Molto utile per il debug)
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: kafka-ui
+    ports:
+      - "8090:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
+    networks:
+      - app-network
+    depends_on:
+      - kafka
+    labels:
+      org.springframework.boot.ignore: true
+
+  kafka-connect:
+    image: quay.io/debezium/connect:2.5 # Immagine che include già il plugin Postgres
+    container_name: kafka-connect
+    ports:
+      - "8083:8083" # Porta per le API REST (dove il JSON è inviato)
+    environment:
+      - BOOTSTRAP_SERVERS=kafka:29092
+      - GROUP_ID=1
+      - CONFIG_STORAGE_TOPIC=my_connect_configs
+      - OFFSET_STORAGE_TOPIC=my_connect_offsets
+      - STATUS_STORAGE_TOPIC=my_connect_statuses
+      # Formato messaggi interni (JSON senza schema per semplicità)
+      - KEY_CONVERTER=org.apache.kafka.connect.json.JsonConverter
+      - VALUE_CONVERTER=org.apache.kafka.connect.json.JsonConverter
+      - INTERNAL_KEY_CONVERTER=org.apache.kafka.connect.json.JsonConverter
+      - INTERNAL_VALUE_CONVERTER=org.apache.kafka.connect.json.JsonConverter
+      - CONNECT_KEY_CONVERTER_SCHEMAS_ENABLE=false
+      - CONNECT_VALUE_CONVERTER_SCHEMAS_ENABLE=false
+    depends_on:
+      - kafka
+      - postgres
+    networks:
+      - app-network
+
+  init-connect:
+    image: curlimages/curl:latest
+    container_name: init-connect
+    depends_on:
+      - kafka-connect
+    volumes:
+      - ./debezium-connector-outbox-config.json:/tmp/connector-config.json
+    networks:
+      - app-network
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        echo "Waiting for Kafka Connect to start..."
+        # Loop finché l'endpoint principale non risponde con HTTP 200
+        while [ $(curl -s -o /dev/null -w "%{http_code}" http://kafka-connect:8083/) -ne 200 ]; do
+          echo "Kafka Connect not ready yet..."
+          sleep 5
+        done
+        
+        echo "Kafka Connect is up! Registering connector..."
+        
+        # Invio la configurazione. 
+        # Se esiste già, darà errore 409 (Conflict), ma va bene così.
+        curl -X POST -H "Content-Type: application/json" \
+          --data @/tmp/connector-config.json \
+          http://kafka-connect:8083/connectors
+        
+        echo "Done."
+
+volumes:
+  postgres_data: {}
+  minio_data: {}
+  keycloak_data: {}
+  kafka_data: {} # Volume persistente per Kafka
+
+networks:
+  app-network:

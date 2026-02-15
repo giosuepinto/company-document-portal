@@ -1,0 +1,26 @@
+{
+  "name": "fileservice-outbox-connector",
+  "config": {
+    "connector.class": "io.debezium.connector.postgresql.PostgresConnector",
+    "database.hostname": "postgres",
+    "database.port": "5432",
+    "database.user": "fileuser",
+    "database.password": "filepass",
+    "database.dbname": "filesdb",
+    "table.include.list": "public.outbox",
+    "topic.prefix": "file-service",
+    "transforms": "outbox",
+    "transforms.outbox.type": "io.debezium.transforms.outbox.EventRouter",
+    "transforms.outbox.table.field.event.id": "id",
+    "transforms.outbox.table.field.event.key": "aggregateid",
+    "transforms.outbox.table.field.event.type": "aggregatetype",
+    "transforms.outbox.table.field.event.payload": "payload",
+    "transforms.outbox.route.topic.replacement": "${routedByValue}",
+    "plugin.name": "pgoutput",
+    "key.converter.schemas.enable": "false",
+    "value.converter.schemas.enable": "false",
+    "value.converter": "org.apache.kafka.connect.json.JsonConverter",
+    "key.converter": "org.apache.kafka.connect.storage.StringConverter",
+    "snapshot.mode": "initial"
+  }
+}

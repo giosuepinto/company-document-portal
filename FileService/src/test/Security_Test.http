@@ -1,0 +1,150 @@
+### Configurazione Variabili Globali
+@gateway = http://localhost:8080
+@fileservice = http://localhost:8082
+@keycloak = http://localhost:9090
+@realm = file-management
+@client_id = gateway-client
+# INCOLLA QUI SOTTO IL TUO CLIENT SECRET COPIATO DA KEYCLOAK
+@client_secret = j22DQRgv8U3IkxAz1vAU41swQRnFDQ4B
+
+### --------------------------------------------------------------------
+### 1. AUTENTICAZIONE ALICE (Ruolo: ADMIN / MANAGER)
+### Ottiene il token per Alice. Assicurati che su Keycloak Alice abbia il ruolo 'admin'.
+### --------------------------------------------------------------------
+POST {{keycloak}}/realms/{{realm}}/protocol/openid-connect/token
+Content-Type: application/x-www-form-urlencoded
+
+client_id={{client_id}}&client_secret={{client_secret}}&username=admin&password=admin&grant_type=password
+
+> {%
+    client.global.set("alice_token", response.body.access_token);
+    // Estraiamo il 'sub' (User ID) dal token per usarlo nei filtri dopo
+    // Nota: In uno script reale faremmo il parsing JWT, qui ci fidiamo che il backend lo sappia
+    client.log("✅ Alice Token ottenuto");
+%}
+
+### --------------------------------------------------------------------
+### 2. AUTENTICAZIONE BOB (Ruolo: STAFF)
+### Ottiene il token per Bob. Assicurati che su Keycloak Bob abbia il ruolo 'staff'.
+### --------------------------------------------------------------------
+POST {{keycloak}}/realms/{{realm}}/protocol/openid-connect/token
+Content-Type: application/x-www-form-urlencoded
+
+client_id={{client_id}}&client_secret={{client_secret}}&username=staff&password=staff&grant_type=password
+
+> {%
+    client.global.set("bob_token", response.body.access_token);
+    client.log("✅ Bob Token ottenuto");
+%}
+
+### --------------------------------------------------------------------
+### 3. TEST SICUREZZA BACKEND (Accesso Diretto)
+### Deve fallire con 401 Unauthorized.
+### --------------------------------------------------------------------
+GET {{fileservice}}/api/v1/files
+
+### --------------------------------------------------------------------
+### 4. TEST GATEWAY + RBAC (Alice - Lista File)
+### Deve restituire 200 OK.
+### --------------------------------------------------------------------
+GET {{gateway}}/api/v1/files
+Authorization: Bearer {{alice_token}}
+
+### --------------------------------------------------------------------
+### 5. TEST TUS UPLOAD (Alice crea un file)
+### Alice inizia l'upload.
+### Metadata: filename "test_alice.txt" (Base64: dGVzdF9hbGljZS50eHQ=)
+### --------------------------------------------------------------------
+POST {{gateway}}/uploads
+Authorization: Bearer {{alice_token}}
+Tus-Resumable: 1.0.0
+Upload-Length: 12
+Upload-Metadata: filename dGVzdF9hbGljZS50eHQ=,contentType dGV4dC9wbGFpbg==
+
+> {%
+    var location = response.headers.valueOf("Location");
+    if (location) {
+        client.global.set("upload_url", location);
+        client.log("✅ Upload creato: " + location);
+    } else {
+        client.log("❌ Errore: Header Location mancante (Status: " + response.status + ")");
+    }
+%}
+
+### --------------------------------------------------------------------
+### 6. TEST TUS PATCH (Alice carica i dati e FINALIZZA)
+### --------------------------------------------------------------------
+PATCH {{upload_url}}
+Authorization: Bearer {{alice_token}}
+Tus-Resumable: 1.0.0
+Upload-Offset: 0
+Content-Type: application/offset+octet-stream
+
+Hello World!
+
+### --------------------------------------------------------------------
+### 6-BIS. RECUPERO FILE ID REALE (Filtrando per NOME)
+### Cerchiamo il file "test_alice.txt" appena creato per avere il vero ID persistente.
+### --------------------------------------------------------------------
+GET {{gateway}}/api/v1/files
+Authorization: Bearer {{alice_token}}
+
+> {%
+    var targetName = "test_alice.txt";
+    var filesList = response.body.content;
+
+    var myFile = filesList.find(function(f) { return f.filename === targetName; });
+
+    if (myFile) {
+        client.global.set("real_file_id", myFile.id);
+        client.log("✅ FILE TROVATO! ID: " + myFile.id);
+    } else {
+        client.log("❌ ERRORE: Nessun file trovato con nome '" + targetName + "'");
+    }
+%}
+
+### --------------------------------------------------------------------
+### 7. TEST ACL (Alice legge il SUO file)
+### Deve restituire 200 OK.
+### --------------------------------------------------------------------
+GET {{gateway}}/api/v1/files/{{real_file_id}}
+Authorization: Bearer {{alice_token}}
+
+### --------------------------------------------------------------------
+### 8. TEST ACL VIOLATION (Bob Staff prova a leggere file di Alice)
+### Deve fallire con 403 Forbidden (Access Denied dal Service Layer).
+### --------------------------------------------------------------------
+GET {{gateway}}/api/v1/files/{{real_file_id}}
+Authorization: Bearer {{bob_token}}
+
+> {%
+    client.test("Bob deve ricevere 403", function() {
+        client.assert(response.status === 403, "Expected 403 Forbidden but got " + response.status);
+    });
+%}
+
+### --------------------------------------------------------------------
+### 9. TEST DELETE FALLITO (Bob prova a cancellare)
+### Deve fallire con 403 Forbidden.
+### --------------------------------------------------------------------
+DELETE {{gateway}}/api/v1/files/{{real_file_id}}
+Authorization: Bearer {{bob_token}}
+
+> {%
+    client.test("Bob non può cancellare", function() {
+        client.assert(response.status === 403, "Expected 403 Forbidden but got " + response.status);
+    });
+%}
+
+### --------------------------------------------------------------------
+### 10. TEST DELETE RIUSCITO (Alice cancella il SUO file)
+### Deve restituire 204 No Content.
+### --------------------------------------------------------------------
+DELETE {{gateway}}/api/v1/files/{{real_file_id}}
+Authorization: Bearer {{alice_token}}
+
+> {%
+    client.test("Cancellazione riuscita", function() {
+        client.assert(response.status === 204, "Expected 204 No Content but got " + response.status);
+    });
+%}

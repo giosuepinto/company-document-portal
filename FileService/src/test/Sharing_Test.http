@@ -1,0 +1,135 @@
+### CONFIGURATION
+@userServiceUrl = http://localhost:8081
+@fileServiceUrl = http://localhost:8080
+@tusEndpoint = http://localhost:8080/uploads
+
+# -------------------------------------------------------
+# STEP 0: Create Users (Owner and Target)
+# -------------------------------------------------------
+# 0a. Create Alice (Owner)
+POST {{userServiceUrl}}/api/v1/users
+Content-Type: application/json
+
+{
+  "fullName": "Alice",
+  "email": "alice@example.com",
+  "organization": "Polito",
+  "role": "ADMIN"
+}
+
+> {%
+    client.global.set("aliceId", response.body.id);
+    client.log("Alice ID: " + response.body.id);
+%}
+
+###
+
+# 0b. Create Bob (Target for sharing)
+POST {{userServiceUrl}}/api/v1/users
+Content-Type: application/json
+
+{
+  "fullName": "Bob Target",
+  "email": "bob@example.com",
+  "organization": "Polito",
+  "role": "VIEWER"
+}
+
+> {%
+    client.global.set("bobId", response.body.id);
+    client.log("Bob ID: " + response.body.id);
+%}
+
+###
+
+# -------------------------------------------------------
+# STEP 1: Upload a File as Alice
+# -------------------------------------------------------
+# 1a. Start Upload
+POST {{tusEndpoint}}
+Tus-Resumable: 1.0.0
+Upload-Length: 19
+# Metadata: filename "secret_doc.txt"
+Upload-Metadata: filename c2VjcmV0X2RvYy50eHQ=,contentType dGV4dC9wbGFpbg==
+X-User-Id: {{aliceId}}
+
+> {%
+    client.global.set("uploadUrl", response.headers.valueOf("Location"));
+%}
+
+###
+
+# 1b. Finish Upload
+PATCH {{uploadUrl}}
+Tus-Resumable: 1.0.0
+Upload-Offset: 0
+Content-Type: application/offset+octet-stream
+
+This is top secret.
+
+###
+
+# -------------------------------------------------------
+# STEP 2: Get the File ID
+# -------------------------------------------------------
+GET {{fileServiceUrl}}/api/v1/files?filename=secret_doc.txt
+
+> {%
+    // Retrieve the ID of the file we just uploaded
+    var fileId = response.body.content[0].id;
+    client.global.set("fileId", fileId);
+    client.log("File to share ID: " + fileId);
+%}
+
+###
+
+# -------------------------------------------------------
+# STEP 3: Share the File
+# -------------------------------------------------------
+# Alice shares the file with Bob (READ permission)
+POST {{fileServiceUrl}}/api/v1/files/{{fileId}}/shares
+Content-Type: application/json
+
+{
+  "userId": "{{bobId}}",
+  "permission": "READ"
+}
+
+> {%
+    client.global.set("shareId", response.body.id);
+    client.log("Share created with ID: " + response.body.id);
+%}
+
+###
+
+# -------------------------------------------------------
+# STEP 4: Verifications
+# -------------------------------------------------------
+# 4a. Check shares for the file
+GET {{fileServiceUrl}}/api/v1/files/{{fileId}}/shares
+
+###
+
+# 4b. Check files shared WITH Bob
+GET {{fileServiceUrl}}/api/v1/files/shared-with/{{bobId}}
+
+###
+
+# -------------------------------------------------------
+# STEP 5: Test Error (User not found)
+# -------------------------------------------------------
+# Try to share with a non-existent UUID
+POST {{fileServiceUrl}}/api/v1/files/{{fileId}}/shares
+Content-Type: application/json
+
+{
+  "userId": "00000000-0000-0000-0000-000000000000",
+  "permission": "WRITE"
+}
+
+###
+
+# -------------------------------------------------------
+# STEP 6: Cleanup (Remove Share)
+# -------------------------------------------------------
+DELETE {{fileServiceUrl}}/api/v1/files/{{fileId}}/shares/{{shareId}}

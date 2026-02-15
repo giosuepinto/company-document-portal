@@ -1,0 +1,167 @@
+### Configurazione Variabili Globali
+@gatewayUrl = http://localhost:8080
+@keycloakUrl = http://localhost:9090
+@userServiceUrl = http://localhost:8081
+@fileServiceUrl = http://localhost:8082
+
+# Credenziali Keycloak
+@realm = file-management
+@clientId = gateway-client
+@clientSecret = j22DQRgv8U3IkxAz1vAU41swQRnFDQ4B
+
+# ==========================================
+# 0. PROVISIONING (JIT) - PASSO FONDAMENTALE
+# ==========================================
+# Staff e Manager devono fare login una volta per essere creati nel DB locale
+
+### 0.1 Login STAFF (Trigger JIT)
+POST {{keycloakUrl}}/realms/{{realm}}/protocol/openid-connect/token
+Content-Type: application/x-www-form-urlencoded
+
+grant_type=password&client_id={{clientId}}&client_secret={{clientSecret}}&username=staff&password=staff
+
+> {%
+    client.global.set("staff_token", response.body.access_token);
+%}
+
+### 0.2 Staff chiama /me per essere creato su Postgres
+GET {{userServiceUrl}}/api/v1/users/me
+Authorization: Bearer {{staff_token}}
+
+### 0.3 Login MANAGER (Trigger JIT)
+POST {{keycloakUrl}}/realms/{{realm}}/protocol/openid-connect/token
+Content-Type: application/x-www-form-urlencoded
+
+grant_type=password&client_id={{clientId}}&client_secret={{clientSecret}}&username=manager&password=manager
+
+> {%
+    client.global.set("manager_token", response.body.access_token);
+%}
+
+### 0.4 Manager chiama /me per essere creato su Postgres
+GET {{userServiceUrl}}/api/v1/users/me
+Authorization: Bearer {{manager_token}}
+
+
+# ==========================================
+# 1. SETUP AMMINISTRATIVO
+# ==========================================
+
+### 1.1 Login ADMIN
+POST {{keycloakUrl}}/realms/{{realm}}/protocol/openid-connect/token
+Content-Type: application/x-www-form-urlencoded
+
+grant_type=password&client_id={{clientId}}&client_secret={{clientSecret}}&username=admin&password=admin
+
+> {%
+    client.global.set("admin_token", response.body.access_token);
+%}
+
+### 1.2 Trova UUID dello STAFF (Ora funzionerà!)
+GET {{userServiceUrl}}/api/v1/users/by-email/staff@staff
+Authorization: Bearer {{admin_token}}
+
+> {%
+    client.global.set("staff_uuid", response.body.id);
+    client.log("Staff UUID: " + response.body.id);
+%}
+
+### 1.3 Assegna Dipartimento 'IT' allo STAFF
+PUT {{userServiceUrl}}/api/v1/users/{{staff_uuid}}
+Authorization: Bearer {{admin_token}}
+Content-Type: application/json
+
+{
+  "id": "{{staff_uuid}}",
+  "fullName": "staff",
+  "email": "staff@staff",
+  "organization": "Polito",
+  "role": "STAFF",
+  "department": "IT",
+  "storageQuota": 1000,
+  "notes": "Updated via HTTP Client"
+}
+
+### 1.4 Trova UUID del MANAGER
+GET {{userServiceUrl}}/api/v1/users/by-email/manager@manager
+Authorization: Bearer {{admin_token}}
+
+> {%
+    client.global.set("manager_uuid", response.body.id);
+    client.log("Manager UUID: " + response.body.id);
+%}
+
+### 1.5 Assegna Dipartimento 'IT' al MANAGER
+PUT {{userServiceUrl}}/api/v1/users/{{manager_uuid}}
+Authorization: Bearer {{admin_token}}
+Content-Type: application/json
+
+{
+  "id": "{{manager_uuid}}",
+  "fullName": "manager",
+  "email": "manager@manager",
+  "organization": "Polito",
+  "role": "MANAGER",
+  "department": "IT",
+  "storageQuota": 2000
+}
+
+
+###==========================================
+# 2. AZIONI DELLO STAFF (CREAZIONE FILE)
+# ==========================================
+
+### 2.1 (Opzionale) Refresh Login STAFF
+# Usiamo il token ottenuto al passo 0.1 se non è scaduto, o lo richiediamo qui
+
+### 2.2 Crea Upload TUS (Staff)
+POST {{fileServiceUrl}}/uploads
+Authorization: Bearer {{staff_token}}
+Tus-Resumable: 1.0.0
+Upload-Length: 12
+Upload-Metadata: filename dGVzdC50eHQ=,contentType dGV4dC9wbGFpbg==
+
+> {%
+    var location = response.headers.valueOf("Location");
+    client.global.set("uploadUrl", location);
+    client.log("Upload URL: " + location);
+%}
+
+### 2.3 Upload del contenuto (Staff)
+PATCH {{uploadUrl}}
+Authorization: Bearer {{staff_token}}
+Tus-Resumable: 1.0.0
+Upload-Offset: 0
+Content-Type: application/offset+octet-stream
+
+Hello World!
+
+### 2.4 Recupera ID del file persistente (Staff)
+GET {{fileServiceUrl}}/api/v1/files
+Authorization: Bearer {{staff_token}}
+
+> {%
+    // Prende il primo file della lista
+    var fileId = response.body.content[0].id;
+    client.global.set("target_file_id", fileId);
+    client.log("File ID creato: " + fileId);
+%}
+
+
+### ==========================================
+# 3. VERIFICA ACL (MANAGER)
+# ==========================================
+
+### 3.1 Login MANAGER (Opzionale se token 0.3 valido)
+# Usiamo {{manager_token}}
+
+### 3.2 TEST POSITIVO: Manager accede al file dello Staff (Stesso Dipartimento 'IT')
+GET {{fileServiceUrl}}/api/v1/files/{{target_file_id}}
+Authorization: Bearer {{manager_token}}
+
+> {%
+    client.test("Request executed successfully", function() {
+        client.assert(response.status === 200, "Response status is not 200");
+    });
+    client.log("TEST SUPERATO: Il Manager ha letto il file dello Staff");
+%}

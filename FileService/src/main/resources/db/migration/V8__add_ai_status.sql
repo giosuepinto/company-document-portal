@@ -1,0 +1,1 @@
+ALTER TABLE file_version ADD COLUMN ai_status VARCHAR(20) DEFAULT 'PENDING';
