@@ -59,6 +59,15 @@ dependencies {
     testRuntimeOnly("com.h2database:h2")
 
     implementation("org.springframework.ai:spring-ai-tika-document-reader:1.0.0-M6") // useful for file reading
+
+    // OpenTelemetry
+    implementation(platform("io.opentelemetry:opentelemetry-bom:1.38.0"))
+    implementation(platform("io.opentelemetry.instrumentation:opentelemetry-instrumentation-bom-alpha:2.3.0-alpha"))
+    implementation("io.opentelemetry.instrumentation:opentelemetry-kafka-clients-2.6")
+    // OpenTelemetry starter for the integration with Spring Boot
+    implementation("io.opentelemetry.instrumentation:opentelemetry-spring-boot-starter")
+    // OTLP Explorator (sends data to the Collector)
+    implementation("io.opentelemetry:opentelemetry-exporter-otlp")
 }
 
 kotlin {

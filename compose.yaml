@@ -188,6 +188,16 @@ services:
           http://kafka-connect:8083/connectors
         
         echo "Done."
+  otel-collector: # OpenTelemetry collector
+    image: otel/opentelemetry-collector-contrib
+    volumes:
+      - ./otel-config.yaml:/etc/otel-config.yaml
+    command: ["--config=/etc/otel-config.yaml"]
+    ports:
+      - "4317:4317" # OTLP gRPC
+      - "4318:4318" # OTLP HTTP
+    networks:
+      - app-network
 
 volumes:
   postgres_data: {}

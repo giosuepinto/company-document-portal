@@ -45,6 +45,14 @@ dependencies {
     testImplementation("org.jetbrains.kotlin:kotlin-test-junit5")
     testImplementation("org.springframework.security:spring-security-test")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
+
+    // OpenTelemetry
+    implementation(platform("io.opentelemetry:opentelemetry-bom:1.38.0"))
+    implementation(platform("io.opentelemetry.instrumentation:opentelemetry-instrumentation-bom-alpha:2.3.0-alpha"))
+    // OpenTelemetry starter for the integration with Spring Boot
+    implementation("io.opentelemetry.instrumentation:opentelemetry-spring-boot-starter")
+    // OTLP Explorator (sends data to the Collector)
+    implementation("io.opentelemetry:opentelemetry-exporter-otlp")
 }
 
 // Fondamentale per far funzionare Spring Cloud Gateway senza conflitti

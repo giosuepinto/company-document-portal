@@ -72,6 +72,13 @@ dependencies {
 
     implementation("org.springframework.kafka:spring-kafka")
 
+    // OpenTelemetry
+    implementation(platform("io.opentelemetry:opentelemetry-bom:1.38.0"))
+    implementation(platform("io.opentelemetry.instrumentation:opentelemetry-instrumentation-bom-alpha:2.3.0-alpha"))
+    // OpenTelemetry starter for the integration with Spring Boot
+    implementation("io.opentelemetry.instrumentation:opentelemetry-spring-boot-starter")
+    // OTLP Explorator (sends data to the Collector)
+    implementation("io.opentelemetry:opentelemetry-exporter-otlp")
 }
 
 kotlin {

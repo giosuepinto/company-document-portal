@@ -62,6 +62,14 @@ dependencies {
     implementation("org.springframework.boot:spring-boot-starter-oauth2-resource-server")
     implementation("org.springframework.boot:spring-boot-starter-security")
 
+    // OpenTelemetry
+    implementation(platform("io.opentelemetry:opentelemetry-bom:1.38.0"))
+    implementation(platform("io.opentelemetry.instrumentation:opentelemetry-instrumentation-bom-alpha:2.3.0-alpha"))
+    // OpenTelemetry starter for the integration with Spring Boot
+    implementation("io.opentelemetry.instrumentation:opentelemetry-spring-boot-starter")
+    // OTLP Explorator (sends data to the Collector)
+    implementation("io.opentelemetry:opentelemetry-exporter-otlp")
+
 }
 
 kotlin {
