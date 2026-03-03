@@ -1,4 +1,4 @@
-rootProject.name = "lab05"
+rootProject.name = "file-upload-project"
 
 pluginManagement {
     repositories {

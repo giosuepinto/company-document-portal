@@ -8,14 +8,15 @@ import org.springframework.ai.chat.client.ChatClient
 import org.springframework.ai.chat.prompt.PromptTemplate
 import org.springframework.ai.converter.BeanOutputConverter
 import org.springframework.ai.document.Document
+import org.springframework.ai.reader.tika.TikaDocumentReader
 import org.springframework.ai.transformer.splitter.TokenTextSplitter
 import org.springframework.ai.vectorstore.SearchRequest
 import org.springframework.ai.vectorstore.VectorStore
 import org.springframework.beans.factory.annotation.Value
+import org.springframework.core.io.ByteArrayResource
 import org.springframework.kafka.annotation.KafkaListener
 import org.springframework.stereotype.Service
 import org.springframework.web.client.RestClient
-import java.nio.charset.StandardCharsets
 import java.time.Instant
 
 @Service
@@ -41,7 +42,11 @@ class AiProcessor(
                 .body(ByteArray::class.java)
                 ?: throw RuntimeException("File is empty")
 
-            val textContent = String(contentBytes, StandardCharsets.UTF_8)
+            val resource = ByteArrayResource(contentBytes)
+            val reader = TikaDocumentReader(resource)
+            val extractedDocuments = reader.get() // extracts clean text from different formats (e.g. pdf, word, txt)
+            val textContent = extractedDocuments.joinToString("\n") { it.formattedContent }
+
             logger.info("Text extracted: ${textContent.length} characters")
 
             // embedding (step 7)

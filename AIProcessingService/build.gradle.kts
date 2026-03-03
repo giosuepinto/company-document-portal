@@ -6,7 +6,7 @@ plugins {
 }
 
 group = "it.polito.wa2_2026.g15"
-version = "1.7.0"
+version = "1.7.1"
 
 java {
     toolchain {
@@ -57,6 +57,8 @@ dependencies {
     testImplementation("org.testcontainers:junit-jupiter")
     testImplementation("org.testcontainers:postgresql")
     testRuntimeOnly("com.h2database:h2")
+
+    implementation("org.springframework.ai:spring-ai-tika-document-reader:1.0.0-M6") // useful for file reading
 }
 
 kotlin {
