@@ -14,17 +14,29 @@ exporters:
   debug:
     verbosity: detailed
 
+  # exporter for Langtrace
+  otlphttp/langtrace:
+    encoding: json
+    compression: none
+    traces_endpoint: "https://app.langtrace.ai/api/trace"
+    tls:
+      insecure: false
+    headers:
+      x-api-key: "${LANGTRACE_API_KEY}"
+      Content-Type: "application/json"
+
+
 service:
   pipelines:
     traces:
-      receivers: [otlp]
-      processors: [batch]
-      exporters: [debug]
+      receivers: [ otlp ]
+      processors: [ batch ]
+      exporters: [debug, otlphttp/langtrace]
     metrics:
-      receivers: [otlp]
-      processors: [batch]
-      exporters: [debug]
+      receivers: [ otlp ]
+      processors: [ batch ]
+      exporters: [ debug ]
     logs:
-      receivers: [otlp]
-      processors: [batch]
-      exporters: [debug]
+      receivers: [ otlp ]
+      processors: [ batch ]
+      exporters: [ debug ]

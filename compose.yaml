@@ -190,6 +190,8 @@ services:
         echo "Done."
   otel-collector: # OpenTelemetry collector
     image: otel/opentelemetry-collector-contrib
+    environment:
+      - LANGTRACE_API_KEY=${LANGTRACE_API_KEY}
     volumes:
       - ./otel-config.yaml:/etc/otel-config.yaml
     command: ["--config=/etc/otel-config.yaml"]
