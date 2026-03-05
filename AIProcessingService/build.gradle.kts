@@ -6,7 +6,7 @@ plugins {
 }
 
 group = "it.polito.wa2_2026.g15"
-version = "1.7.1"
+version = "1.7.2"
 
 java {
     toolchain {

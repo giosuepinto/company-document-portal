@@ -6,7 +6,7 @@ plugins {
 }
 
 group = "it.polito.wa2_2026.g15"
-version = "1.17.0"
+version = "1.17.1"
 description = "TusUploaderService"
 
 java {

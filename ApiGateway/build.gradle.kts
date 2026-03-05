@@ -6,7 +6,7 @@ plugins {
 }
 
 group = "it.polito.wa2_2026.g15"
-version = "1.3.0"
+version = "1.3.1"
 description = "ApiGateway"
 
 java {
