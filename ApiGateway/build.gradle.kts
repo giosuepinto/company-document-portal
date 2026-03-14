@@ -53,6 +53,10 @@ dependencies {
     implementation("io.opentelemetry.instrumentation:opentelemetry-spring-boot-starter")
     // OTLP Explorator (sends data to the Collector)
     implementation("io.opentelemetry:opentelemetry-exporter-otlp")
+    // Genera le metriche (CPU, RAM, API)
+    implementation("org.springframework.boot:spring-boot-starter-actuator")
+    // Invia le metriche generate da Actuator al Collector in formato OTLP
+    implementation("io.micrometer:micrometer-registry-otlp")
 }
 
 // Fondamentale per far funzionare Spring Cloud Gateway senza conflitti

@@ -25,18 +25,29 @@ exporters:
       x-api-key: "${LANGTRACE_API_KEY}"
       Content-Type: "application/json"
 
+  # Metriche verso Prometheus
+  prometheus:
+    endpoint: "0.0.0.0:8889"
+    resource_to_telemetry_conversion:
+      enabled: true
+
+  # Log verso Loki (Utilizzando lo standard OTLP HTTP)
+  otlphttp/loki:
+    endpoint: "http://loki:3100/otlp"
+    tls:
+      insecure: true
 
 service:
   pipelines:
     traces:
       receivers: [ otlp ]
       processors: [ batch ]
-      exporters: [debug, otlphttp/langtrace]
+      exporters: [ debug, otlphttp/langtrace ]
     metrics:
       receivers: [ otlp ]
       processors: [ batch ]
-      exporters: [ debug ]
+      exporters: [ debug, prometheus ]
     logs:
       receivers: [ otlp ]
       processors: [ batch ]
-      exporters: [ debug ]
+      exporters: [ debug, otlphttp/loki ]
