@@ -236,6 +236,11 @@ services:
       - loki
     networks:
       - app-network
+    volumes:
+      # Collega le configurazioni automatiche
+      - ./grafana/provisioning:/etc/grafana/provisioning
+      # Collega la cartella con i file JSON delle dashboard
+      - ./grafana/dashboards:/var/lib/grafana/dashboards
 
 
 volumes:

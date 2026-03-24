@@ -1,0 +1,10 @@
+apiVersion: 1
+providers:
+  - name: 'Le mie Dashboards'
+    orgId: 1
+    folder: ''
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 10 # Grafana ricarica il JSON ogni 10s se lo modifichi!
+    options:
+      path: /var/lib/grafana/dashboards
