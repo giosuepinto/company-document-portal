@@ -31,13 +31,12 @@ const FileIconOrPreview = ({ file }) => {
 // --- HELPER: FULL PREVIEW MODAL ---
 const FilePreviewModal = ({ show, onHide, file }) => {
     const [textContent, setTextContent] = useState(null);
-    const [pdfBlobUrl, setPdfBlobUrl] = useState(null); // NUOVO STATO PER IL PDF
+    const [pdfBlobUrl, setPdfBlobUrl] = useState(null);
     const [loading, setLoading] = useState(false);
 
     const fileUrl = file ? `${API_BASE_URL}/files/${file.id}/download?action=view` : '';
 
     useEffect(() => {
-        // Reset degli stati quando si chiude la modale o cambia il file
         if (!show || !file) {
             setTextContent(null);
             setPdfBlobUrl(null);
@@ -52,7 +51,6 @@ const FilePreviewModal = ({ show, onHide, file }) => {
                 .finally(() => setLoading(false));
 
         } else if (file.contentType === 'application/pdf') {
-            // FIX PDF: Scarica il binario con il token e crea un URL locale
             setLoading(true);
             axios.get(fileUrl, { responseType: 'blob' })
                 .then(res => {
@@ -68,7 +66,6 @@ const FilePreviewModal = ({ show, onHide, file }) => {
             setTextContent(null);
         }
 
-        // Cleanup: Rilascia la memoria dell'URL quando il componente si smonta
         return () => {
             if (pdfBlobUrl) {
                 URL.revokeObjectURL(pdfBlobUrl);
@@ -95,12 +92,10 @@ const FilePreviewModal = ({ show, onHide, file }) => {
                     <img src={fileUrl} alt="Preview" style={{ maxWidth: '100%', maxHeight: '70vh' }} />
                 )}
 
-                {/* VISUALIZZAZIONE PDF TRAMITE BLOB URL */}
                 {!loading && isPdf && pdfBlobUrl && (
                     <iframe src={pdfBlobUrl + "#toolbar=0"} title="PDF" width="100%" height="500px" style={{ border: 'none' }} />
                 )}
 
-                {/* FALLBACK IN CASO DI ERRORE DI CARICAMENTO DEL PDF */}
                 {!loading && isPdf && !pdfBlobUrl && (
                     <div className="text-center">
                         <p className="text-danger">Failed to load PDF preview.</p>
@@ -129,7 +124,6 @@ const FilePreviewModal = ({ show, onHide, file }) => {
 const AiMetadataModal = ({ show, onHide, file }) => {
     if (!file) return null;
 
-    // Determine color and icon based on sensitivity
     const isConfidential = file.sensitivity === 'CONFIDENTIAL';
     const sensitivityVariant = isConfidential ? 'danger' : 'success';
     const SensitivityIcon = isConfidential ? ShieldLock : ShieldCheck;
@@ -143,13 +137,11 @@ const AiMetadataModal = ({ show, onHide, file }) => {
                 </Modal.Title>
             </Modal.Header>
             <Modal.Body>
-                {/* --- HEADER FILE INFO --- */}
                 <div className="mb-4 p-3 bg-light rounded border">
                     <h5 className="text-primary mb-1">{file.filename}</h5>
                     <small className="text-muted">Current Version</small>
                 </div>
 
-                {/* --- SENSITIVITY SECTION --- */}
                 <div className="mb-4">
                     <h6>Security Level</h6>
                     {file.sensitivity ? (
@@ -162,7 +154,6 @@ const AiMetadataModal = ({ show, onHide, file }) => {
                     )}
                 </div>
 
-                {/* --- SUMMARY SECTION --- */}
                 <div className="mb-4">
                     <h6>📝 AI Summary</h6>
                     <div className="p-3 border rounded bg-white">
@@ -179,7 +170,6 @@ const AiMetadataModal = ({ show, onHide, file }) => {
                     </div>
                 </div>
 
-                {/* --- TAGS SECTION --- */}
                 <div>
                     <h6>🏷️ Generated Tags</h6>
                     {file.tags && file.tags.length > 0 ? (
@@ -210,14 +200,11 @@ function FileBrowser({ onStartVersionUpdate, currentUser }) {
     const [error, setError] = useState('');
     const [currentPage, setCurrentPage] = useState(0);
 
-    // States for row expansion (versions)
     const [expandedRows, setExpandedRows] = useState(new Set());
     const [versionsCache, setVersionsCache] = useState({});
 
-    // States for Preview Modal
     const [previewFile, setPreviewFile] = useState(null);
 
-    // States for Share Modal
     const [showShareModal, setShowShareModal] = useState(false);
     const [shareFile, setShareFile] = useState(null);
     const [shareEmail, setShareEmail] = useState('');
@@ -225,39 +212,49 @@ function FileBrowser({ onStartVersionUpdate, currentUser }) {
     const [currentShares, setCurrentShares] = useState([]);
     const [shareError, setShareError] = useState('');
 
-    // States for Edit Metadata Modal
     const [showEditModal, setShowEditModal] = useState(false);
     const [editFile, setEditFile] = useState(null);
     const [newFilename, setNewFilename] = useState('');
     const [newContentType, setNewContentType] = useState('');
     const [editError, setEditError] = useState('');
 
-    // STATE: File selected for AI details
     const [aiModalFile, setAiModalFile] = useState(null);
-
-    const [showRagModal, setShowRagModal] = useState(false); // NEW STATE
+    const [showRagModal, setShowRagModal] = useState(false);
 
     // --- PERMISSIONS ---
-    const isAdmin = currentUser?.role === 'ADMIN';
-
-    // Edit (Metadata, New Version, Rollback): Owner, Admin, Write
     const canEdit = (file) => file.permission === 'OWNER' || file.permission === 'ADMIN' || file.permission === 'WRITE';
-
-    // Share: SOLO Owner e Admin
     const canShare = (file) => file.permission === 'OWNER' || file.permission === 'ADMIN';
-
-    // Delete: SOLO Owner e Admin
     const canDelete = (file) => file.permission === 'OWNER' || file.permission === 'ADMIN';
 
-    // --- LOAD FILES ---
+    // --- LOAD FILES WITH UX IMPROVEMENT (UUID -> NAME) ---
     const fetchFiles = async (page) => {
         setIsLoading(true);
         setError('');
         try {
             const response = await axios.get(`${API_BASE_URL}/files?page=${page}&size=10&sort=createdAt,desc`);
-
             const data = response.data;
-            setFiles(data.content || []);
+            let fetchedFiles = data.content || [];
+
+            // Ottieni i nomi degli Owner per migliorare la UX
+            const uniqueOwnerIds = [...new Set(fetchedFiles.map(f => f.owner))];
+            const ownerMap = {};
+
+            await Promise.all(uniqueOwnerIds.map(async (id) => {
+                try {
+                    const userRes = await axios.get(`${API_BASE_URL}/users/${id}`);
+                    ownerMap[id] = userRes.data.fullName || userRes.data.email;
+                } catch (e) {
+                    ownerMap[id] = id; // Fallback all'UUID se non trovato
+                }
+            }));
+
+            // Mappa i file aggiungendo il campo ownerName
+            fetchedFiles = fetchedFiles.map(f => ({
+                ...f,
+                ownerName: ownerMap[f.owner] || f.owner
+            }));
+
+            setFiles(fetchedFiles);
             setPageInfo({
                 totalPages: data.totalPages,
                 number: data.number,
@@ -280,7 +277,6 @@ function FileBrowser({ onStartVersionUpdate, currentUser }) {
         fetchFiles(currentPage);
     }, [currentPage]);
 
-    // --- LOAD VERSIONS ---
     const fetchVersions = async (fileId) => {
         try {
             const response = await axios.get(`${API_BASE_URL}/files/${fileId}/history`);
@@ -301,7 +297,6 @@ function FileBrowser({ onStartVersionUpdate, currentUser }) {
         setExpandedRows(newExpanded);
     };
 
-    // --- ACTIONS ---
     const deleteFile = async (id) => {
         if (!window.confirm("Are you sure you want to delete this file?")) return;
         try {
@@ -323,7 +318,6 @@ function FileBrowser({ onStartVersionUpdate, currentUser }) {
         }
     };
 
-    // --- METADATA EDIT ---
     const openEditModal = (file) => {
         setEditFile(file);
         setNewFilename(file.filename);
@@ -347,7 +341,6 @@ function FileBrowser({ onStartVersionUpdate, currentUser }) {
         }
     };
 
-    // --- SHARING ---
     const openShareModal = async (file) => {
         setShareFile(file);
         setShowShareModal(true);
@@ -401,11 +394,9 @@ function FileBrowser({ onStartVersionUpdate, currentUser }) {
                 setCurrentShares([...currentShares, newShare]);
                 setShareEmail('');
 
-
             } catch (err) {
                 throw new Error(`User with email '${emailToShare}' not found in the system.`);
             }
-
 
         } catch (err) {
             const msg = err.response?.data?.detail || err.message || "Share failed.";
@@ -422,7 +413,6 @@ function FileBrowser({ onStartVersionUpdate, currentUser }) {
         }
     };
 
-    // --- RENDER PAGINATION ---
     let paginationItems = [];
     if (pageInfo) {
         for (let number = 0; number < pageInfo.totalPages; number++) {
@@ -477,41 +467,34 @@ function FileBrowser({ onStartVersionUpdate, currentUser }) {
                                         <div style={{ cursor: 'pointer' }} onClick={() => setPreviewFile(file)}>
                                             <FileIconOrPreview file={file} />
                                         </div>
-
-                                        {/* Filename + AI Info Button */}
                                         <div className="d-flex flex-column ms-2">
                                             <div className="d-flex align-items-center">
-                                                {/* Clickable filename */}
                                                 <span className="fw-bold text-primary" style={{ cursor: 'pointer' }} onClick={() => setPreviewFile(file)}>
                                                     {file.filename}
                                                 </span>
-
-                                                {/* --- NEW AI INFO BUTTON (Next to name) --- */}
                                                 <Button
                                                     variant="link"
                                                     className="p-0 ms-2 text-info d-flex align-items-center"
                                                     title="AI Summary"
                                                     onClick={(e) => {
-                                                        e.stopPropagation(); // Prevent opening preview
+                                                        e.stopPropagation();
                                                         setAiModalFile(file);
                                                     }}
                                                     style={{ textDecoration: 'none' }}
                                                 >
                                                     <InfoCircle size={16} />
                                                 </Button>
-                                                {/* ----------------------------------------------- */}
                                             </div>
-
-                                            {/* Content Type (Below name) */}
                                             <small className="text-muted">{file.contentType}</small>
                                         </div>
                                     </div>
                                 </td>
                                 <td>
-                                    {file.permission === 'OWNER' ?
-                                        <span className="fw-bold text-success">Me</span> :
-                                        <small className="text-muted" style={{fontFamily: 'monospace', fontSize: '0.85em'}}>{file.owner}</small>
-                                    }
+                                    {/* --- FIX UX: Rimossa visualizzazione "Me" --- */}
+                                    <small className="text-muted" style={{fontFamily: 'monospace', fontSize: '0.85em'}}>
+                                        {/* Mostra sempre il nome risolto o l'UUID come fallback */}
+                                        {file.ownerName || file.owner}
+                                    </small>
                                 </td>
                                 <td>
                                     {file.permission === 'OWNER' && <Badge bg="success">Owner</Badge>}
@@ -557,7 +540,6 @@ function FileBrowser({ onStartVersionUpdate, currentUser }) {
                                 </td>
                             </tr>
 
-                            {/* EXPANDED ROW FOR HISTORY */}
                             {expandedRows.has(file.id) && (
                                 <tr>
                                     <td colSpan="7" className="bg-light p-3">
@@ -594,7 +576,6 @@ function FileBrowser({ onStartVersionUpdate, currentUser }) {
                 )}
             </Card.Body>
 
-            {/* --- SHARE MODAL --- */}
             <Modal show={showShareModal} onHide={() => setShowShareModal(false)}>
                 <Modal.Header closeButton><Modal.Title>Share File</Modal.Title></Modal.Header>
                 <Modal.Body>
@@ -603,7 +584,7 @@ function FileBrowser({ onStartVersionUpdate, currentUser }) {
                         <InputGroup className="mb-3">
                             <Form.Control
                                 type="email"
-                                placeholder="Enter user email (e.g. staff@staff)"
+                                placeholder="Enter user email (e.g. staff@staff.com)"
                                 value={shareEmail}
                                 onChange={e => setShareEmail(e.target.value)}
                                 required
@@ -639,7 +620,6 @@ function FileBrowser({ onStartVersionUpdate, currentUser }) {
                 </Modal.Body>
             </Modal>
 
-            {/* --- EDIT MODAL --- */}
             <Modal show={showEditModal} onHide={() => setShowEditModal(false)}>
                 <Modal.Header closeButton><Modal.Title>Edit Metadata</Modal.Title></Modal.Header>
                 <Modal.Body>
