@@ -553,4 +553,32 @@ class FileController(
         return ResponseEntity.ok(answer)
     }
 
+
+    /**
+     * Endpoint: POST /api/v1/files/{id}/ai-retry
+     * Feature: Manual intervention on AI processing (Req. 6.e)
+     */
+    @Operation(summary = "Retry AI Analysis", description = "Manually re-triggers the AI processing pipeline for the latest version of the file.")
+    @ApiResponses(value = [
+        ApiResponse(responseCode = "200", description = "Retry event dispatched successfully"),
+        ApiResponse(responseCode = "404", description = "File not found"),
+        ApiResponse(responseCode = "403", description = "Insufficient permissions")
+    ])
+    @PostMapping("/{id}/ai-retry")
+    @PreAuthorize("hasAnyRole('staff', 'manager', 'admin')")
+    fun retryAiAnalysis(
+        @Parameter(description = "UUID of the file to re-analyze", required = true)
+        @PathVariable id: String
+    ): ResponseEntity<Void> {
+        val fileId = try {
+            UUID.fromString(id)
+        } catch (_: IllegalArgumentException) {
+            throw IllegalArgumentException("Invalid UUID format: $id")
+        }
+
+        logger.info("REST: Request to manually retry AI analysis for file {}", fileId)
+        uploadService.triggerAiRetry(fileId)
+
+        return ResponseEntity.ok().build()
+    }
 }

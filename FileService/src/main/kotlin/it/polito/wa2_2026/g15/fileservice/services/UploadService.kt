@@ -50,4 +50,6 @@ interface UploadService {
     fun askQuestionToAi(userId: UUID, question: String, specificFileIds: List<String>?): String
 
     fun getAllAllowedFileIds(userId: UUID): List<UUID>
+
+    fun triggerAiRetry(fileId: UUID)
 }

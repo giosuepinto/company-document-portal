@@ -630,4 +630,47 @@ class UploadServiceImpl(
         // - OR expicitilly shared with m
         return fileRepository.findAllAllowedIds(userId, visibleOwners)
     }
+
+    @Transactional
+    override fun triggerAiRetry(fileId: UUID) {
+        // 1. Trova il file e controlla i permessi (solo chi può scrivere/modificare può forzare l'AI)
+        val file = fileRepository.findById(fileId).orElseThrow { FileNotFoundException(fileId) }
+        checkWritePermission(file)
+
+        // 2. Prendi l'ultima versione del file
+        val latestVersion = fileVersionRepository.findTopByFileOrderByUpdatedAtDesc(file)
+            ?: throw IllegalStateException("No versions found for file")
+
+        // 3. Resetta lo stato AI a PENDING
+        latestVersion.ai_status = AiStatus.PENDING
+        fileVersionRepository.save(latestVersion)
+
+        try {
+            // 4. Prepara l'evento identico a quello del normale Upload
+            val event = FileUploadEventDTO(
+                fileId = file.id!!,
+                fileVersionId = latestVersion.id!!.version,
+                ownerId = file.owner!!,
+                filename = latestVersion.filename,
+                contentType = latestVersion.contentType,
+                size = latestVersion.size
+            )
+
+            val jsonPayload = objectMapper.writeValueAsString(event)
+
+            // 5. Salva nell'Outbox per innescare Debezium -> Kafka -> AiService
+            val outboxRecord = Outbox(
+                aggregateid = file.id.toString(),
+                aggregatetype = "file-upload.completed",
+                payload = jsonPayload
+            )
+
+            outboxRepository.save(outboxRecord)
+            logger.info("Manual AI retry triggered for file ${file.id} version ${latestVersion.id!!.version}")
+
+        } catch (ex: Exception) {
+            logger.error("Failed to write to Outbox table for AI Retry", ex)
+            throw RuntimeException("Persistence failed: Outbox could not be written")
+        }
+    }
 }

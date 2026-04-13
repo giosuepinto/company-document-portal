@@ -19,12 +19,16 @@ import org.springframework.stereotype.Service
 import org.springframework.web.client.RestClient
 import java.time.Instant
 
+// IMPORT OPENTELEMETRY
+import io.opentelemetry.api.OpenTelemetry
+
 @Service
 class AiProcessor(
     private val chatClientBuilder: ChatClient.Builder,
-    @Value("\${app.fileservice.url}") private val fileServiceUrl: String,
+    @param:Value("\${app.fileservice.url}") private val fileServiceUrl: String,
     private val restClient: RestClient,
-    private val vectorStore: VectorStore, // manages storing and metedata
+    private val vectorStore: VectorStore,
+    private val openTelemetry: OpenTelemetry // <-- Iniezione del motore di tracciamento
 ) {
     private val logger = LoggerFactory.getLogger(AiProcessor::class.java)
 
@@ -44,25 +48,22 @@ class AiProcessor(
 
             val resource = ByteArrayResource(contentBytes)
             val reader = TikaDocumentReader(resource)
-            val extractedDocuments = reader.get() // extracts clean text from different formats (e.g. pdf, word, txt)
-            val textContent = extractedDocuments.joinToString("\n") { it.formattedContent }
+            val extractedDocuments = reader.get()
+            val textContent = extractedDocuments.joinToString("\n") { it.text.toString() } // o formattedContent
 
             logger.info("Text extracted: ${textContent.length} characters")
 
-            // embedding (step 7)
+            // embedding
             try {
                 logger.info("Chunking text...")
-                // Dividiamo il testo in blocchi di circa 800 token con un piccolo overlap
-                // per non perdere il senso tra un blocco e l'altro
                 val splitter = TokenTextSplitter(800, 100, 5, 10000, true)
                 val initialDocument = Document(textContent)
                 val chunks: List<Document> = splitter.split(initialDocument)
 
                 logger.info("Generating embeddings and storing in DB...")
-                // Trasformiamo i chunk in oggetti Document con i metadati necessari ..
                 val documentsToStore = chunks.mapIndexed { index, doc ->
                     Document(
-                        doc.formattedContent,
+                        doc.text!!, // o formattedContent
                         mapOf(
                             "fileId" to event.fileId.toString(),
                             "fileVersionId" to event.fileVersionId.toString(),
@@ -71,20 +72,22 @@ class AiProcessor(
                             "ownerId" to event.ownerId.toString(),
                             "uploadTimestamp" to Instant.now().toString(),
                             "chunkIndex" to index,
-                            "isFirstChunk" to (index == 0) // Utile per dare priorità agli incipit
+                            "isFirstChunk" to (index == 0)
                         )
                     )
                 }
-                logger.info("Embeddings: {}", documentsToStore)
 
-                // vectorStore.add() invia i dati al modello di embedding (Gemini)
-                // e salva automaticamente i vettori nel database filesdb
+                logger.info("Successfully generated ${documentsToStore.size} chunks.")
+                if (documentsToStore.isNotEmpty()) {
+                    val preview = documentsToStore.first().text!!.take(300).replace("\n", " ") // o formattedContent
+                    logger.info("Preview of first chunk: $preview...")
+                }
+
                 vectorStore.add(documentsToStore)
                 logger.info("Successfully stored ${documentsToStore.size} chunks in the vector store.")
 
             } catch (e: Exception) {
                 logger.error("Failed to process vector storage for file ${event.fileId}", e)
-                // Non blocchiamo il resto del processo se il vector store fallisce
             }
 
             // 2. CHIAMA GEMINI
@@ -115,7 +118,6 @@ class AiProcessor(
         val chatClient = chatClientBuilder.build()
         val outputConverter = BeanOutputConverter(AiResultDTO::class.java)
 
-        // PROMPT SICURO: Usiamo un placeholder {text_content} invece di mettere il testo qui dentro
         val promptUser = """
             Analyze the following text and provide:
             1. A concise summary.
@@ -129,24 +131,46 @@ class AiProcessor(
             {format}
         """.trimIndent()
 
-        val response = chatClient.prompt()
-            .user { u ->
-                u.text(promptUser)
-                    .param("text_content", text.take(15000)) // Passiamo il testo come parametro sicuro!
-                    .param("format", outputConverter.format)
-            }
-            .call()
-            .content()
+        // --- CREAZIONE SPAN MANUALE PER LANGTRACE ---
+        val tracer = openTelemetry.getTracer("ai-processor")
+        val aiSpan = tracer.spanBuilder("gemini-metadata-extraction").startSpan()
 
-        return outputConverter.convert(response!!)
+        val responseText: String
+        try {
+            aiSpan.makeCurrent().use { _ ->
+                // Eseguiamo l'inferenza all'interno di questo Scope protetto
+                val chatResponse = chatClient.prompt()
+                    .user { u ->
+                        u.text(promptUser)
+                            .param("text_content", text.take(15000))
+                            .param("format", outputConverter.format)
+                    }
+                    .call()
+                    .chatResponse()
+
+                responseText = chatResponse?.result?.output?.text ?: ""
+                val tokenUsage = chatResponse?.metadata?.usage
+
+                // Applichiamo i metadati
+                // NUOVO STANDARD OPENTELEMETRY GEN_AI
+                aiSpan.setAttribute("gen_ai.system", "gemini")
+                aiSpan.setAttribute("gen_ai.request.model", "gemini-2.5-flash")
+
+                if (tokenUsage != null) {
+                    aiSpan.setAttribute("gen_ai.usage.input_tokens", tokenUsage.promptTokens.toLong())
+                    aiSpan.setAttribute("gen_ai.usage.output_tokens", tokenUsage.completionTokens.toLong())
+                }
+            }
+        } finally {
+            aiSpan.end() // Chiudiamo sempre lo span per inviarlo al Collector!
+        }
+
+        return outputConverter.convert(responseText)
             ?: AiResultDTO("No result", emptyList(), "PUBLIC")
     }
 
     fun generateAnswer(query: RagQueryRequestDTO): String {
         val chatClient = chatClientBuilder.build()
-
-        // 1. RETRIEVAL (Recupero vettori simili ma FILTRATI)
-        // Usiamo i metadati "fileId" che abbiamo salvato prima!
 
         val idsList = query.filterFileIds.joinToString(",") { "'$it'" }
         val searchRequest = SearchRequest.builder().query(query.question)
@@ -155,25 +179,25 @@ class AiProcessor(
             .build()
 
         val similarDocuments = vectorStore.similaritySearch(searchRequest)
-        logger.info("Similar documents: {}", similarDocuments)
+
+        logger.info("Found ${similarDocuments?.size ?: 0} similar documents.")
 
         if (similarDocuments.isNullOrEmpty()) {
             return "No info found to data you have access to."
         }
 
-        // 2. COMBINA I DOCUMENTI (Context)
         val context = similarDocuments.joinToString("\n\n") { doc ->
             val meta = doc.metadata
             """
             [DOCUMENT: ${meta["filename"]}]
             Type: ${meta["contentType"]} | Date: ${meta["uploadTimestamp"]} | Owner: ${meta["ownerId"]}
             CONTENT:
-            ${doc.text}
+            ${doc.text} // o formattedContent
             """
         }
-        logger.info("Context: {}", context)
 
-        // 3. GENERAZIONE (Augmented Generation)
+        logger.info("Context generated with length: ${context.length} characters")
+
         val promptTemplate = PromptTemplate(
             """
             You are an intelligent assistant analyzing documents.
@@ -195,10 +219,31 @@ class AiProcessor(
             mapOf("context" to context, "question" to query.question)
         )
 
-        // 4. CHIAMATA AL LLM (Gemini/OpenAI)
-        val response = chatClient.prompt(prompt).call().content()
+        // --- CREAZIONE SPAN MANUALE PER LANGTRACE ---
+        val tracer = openTelemetry.getTracer("ai-processor")
+        val aiSpan = tracer.spanBuilder("gemini-rag-query").startSpan()
 
-        return response ?: "No result."
+        val responseText: String
+        try {
+            aiSpan.makeCurrent().use { _ ->
+                val chatResponse = chatClient.prompt(prompt).call().chatResponse()
+
+                responseText = chatResponse?.result?.output?.text ?: "No result."
+                val tokenUsage = chatResponse?.metadata?.usage
+
+                // NUOVO STANDARD OPENTELEMETRY GEN_AI
+                aiSpan.setAttribute("gen_ai.system", "gemini")
+                aiSpan.setAttribute("gen_ai.request.model", "gemini-2.5-flash")
+
+                if (tokenUsage != null) {
+                    aiSpan.setAttribute("gen_ai.usage.input_tokens", tokenUsage.promptTokens.toLong())
+                    aiSpan.setAttribute("gen_ai.usage.output_tokens", tokenUsage.completionTokens.toLong())
+                }
+            }
+        } finally {
+            aiSpan.end()
+        }
+
+        return responseText
     }
-
 }

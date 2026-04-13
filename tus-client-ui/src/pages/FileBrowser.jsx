@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Badge, Card, Table, Alert, Spinner, Button, Pagination, Modal, InputGroup, Form } from 'react-bootstrap';
 import {
     Download, Upload, Trash, Share, ChevronDown, ChevronRight, FileEarmark,
-    PencilSquare, ArrowCounterclockwise, InfoCircle, ShieldLock, ShieldCheck, ChatDots
+    PencilSquare, ArrowCounterclockwise, InfoCircle, ShieldLock, ShieldCheck, ChatDots, ExclamationCircle
 } from 'react-bootstrap-icons';
 import axios from 'axios';
 import { API_BASE_URL } from '../utils/config';
@@ -120,13 +120,24 @@ const FilePreviewModal = ({ show, onHide, file }) => {
     );
 };
 
-// --- TRANSLATED AI METADATA MODAL ---
-const AiMetadataModal = ({ show, onHide, file }) => {
+// --- TRANSLATED AI METADATA MODAL (WITH RETRY) ---
+const AiMetadataModal = ({ show, onHide, file, onRetryAi }) => {
+    const [isRetrying, setIsRetrying] = useState(false);
+
     if (!file) return null;
 
     const isConfidential = file.sensitivity === 'CONFIDENTIAL';
     const sensitivityVariant = isConfidential ? 'danger' : 'success';
     const SensitivityIcon = isConfidential ? ShieldLock : ShieldCheck;
+
+    const handleRetryClick = async () => {
+        setIsRetrying(true);
+        await onRetryAi(file.id);
+        setIsRetrying(false);
+    };
+
+    // Fallback: se il backend passa 'aiStatus' o 'ai_status' lo usiamo. Altrimenti deduciamo.
+    const isFailed = file.aiStatus === 'FAILED' || file.ai_status === 'FAILED';
 
     return (
         <Modal show={show} onHide={onHide} size="lg" centered>
@@ -161,12 +172,32 @@ const AiMetadataModal = ({ show, onHide, file }) => {
                             <p className="mb-0" style={{ whiteSpace: 'pre-line' }}>
                                 {file.summary}
                             </p>
+                        ) : isFailed ? (
+                            <div className="text-center text-danger py-2">
+                                <ExclamationCircle className="me-2" size={24} />
+                                <strong>AI Analysis Failed.</strong> Please retry.
+                            </div>
                         ) : (
                             <div className="text-center text-muted py-2">
                                 <Spinner animation="border" size="sm" className="me-2" />
-                                AI is analyzing the document...
+                                AI is analyzing the document... (or stuck)
                             </div>
                         )}
+                    </div>
+                    {/* --- PULSANTE RETRY/RIGENERA --- */}
+                    <div className="text-end mt-2">
+                        <Button
+                            variant={file.summary ? "outline-primary" : "warning"}
+                            size="sm"
+                            onClick={handleRetryClick}
+                            disabled={isRetrying}
+                        >
+                            {isRetrying ? (
+                                <><Spinner size="sm" animation="border" className="me-1"/> Processing...</>
+                            ) : (
+                                file.summary ? "Regenerate Analysis" : "Retry Analysis"
+                            )}
+                        </Button>
                     </div>
                 </div>
 
@@ -364,43 +395,44 @@ function FileBrowser({ onStartVersionUpdate, currentUser }) {
         }
     };
 
+    // --- FIX UX: Refactor pulito senza throw annidati ---
     const handleAddShare = async (e) => {
         e.preventDefault();
         setShareError('');
 
+        const emailToShare = shareEmail.trim();
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        if (!emailRegex.test(emailToShare)) {
+            setShareError("Please enter a valid email address.");
+            return;
+        }
+
+        let userResponse;
         try {
-            const emailToShare = shareEmail.trim();
-            const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-            if (!emailRegex.test(emailToShare)) {
-                setShareError("Please enter a valid email address.");
-                return;
-            }
-
-            let userIdToShare;
-            try {
-                const userResponse = await axios.get(`${API_BASE_URL}/users/by-email/${emailToShare}`);
-                userIdToShare = userResponse.data.id;
-                const response = await axios.post(`${API_BASE_URL}/files/${shareFile.id}/shares`, {
-                    userId: userIdToShare,
-                    permission: sharePermission
-                });
-
-                const newShare = response.data;
-                newShare.email = emailToShare;
-                if (!newShare.name && userResponse?.data?.fullName) {
-                    newShare.name = userResponse.data.fullName;
-                }
-
-                setCurrentShares([...currentShares, newShare]);
-                setShareEmail('');
-
-            } catch (err) {
-                throw new Error(`User with email '${emailToShare}' not found in the system.`);
-            }
-
+            // Cerca l'utente per email
+            userResponse = await axios.get(`${API_BASE_URL}/users/by-email/${emailToShare}`);
         } catch (err) {
-            const msg = err.response?.data?.detail || err.message || "Share failed.";
-            setShareError(msg);
+            // Se l'utente non esiste, imposta l'errore ed esci
+            setShareError(`User with email '${emailToShare}' not found.`);
+            return;
+        }
+
+        try {
+            // Se l'utente esiste, procedi con la condivisione
+            const userIdToShare = userResponse.data.id;
+            const response = await axios.post(`${API_BASE_URL}/files/${shareFile.id}/shares`, {
+                userId: userIdToShare,
+                permission: sharePermission
+            });
+
+            const newShare = response.data;
+            newShare.email = emailToShare;
+            newShare.name = userResponse.data.fullName || '';
+
+            setCurrentShares([...currentShares, newShare]);
+            setShareEmail('');
+        } catch (err) {
+            setShareError(err.response?.data?.detail || err.message || "Share failed.");
         }
     };
 
@@ -410,6 +442,18 @@ function FileBrowser({ onStartVersionUpdate, currentUser }) {
             setCurrentShares(currentShares.filter(s => s.id !== shareId));
         } catch (err) {
             alert("Revoke failed");
+        }
+    };
+
+    // --- MANAGE RETRY AI FROM FRONTEND ---
+    const handleRetryAi = async (fileId) => {
+        try {
+            await axios.post(`${API_BASE_URL}/files/${fileId}/ai-retry`);
+            alert("AI processing re-triggered! Refresh the page in a few seconds.");
+            fetchFiles(currentPage);
+            setAiModalFile(null); // Chiudiamo la modale per invogliare l'utente a ricaricare la riga
+        } catch (err) {
+            alert("Failed to trigger AI retry: " + (err.response?.data?.detail || err.message));
         }
     };
 
@@ -490,9 +534,7 @@ function FileBrowser({ onStartVersionUpdate, currentUser }) {
                                     </div>
                                 </td>
                                 <td>
-                                    {/* --- FIX UX: Rimossa visualizzazione "Me" --- */}
                                     <small className="text-muted" style={{fontFamily: 'monospace', fontSize: '0.85em'}}>
-                                        {/* Mostra sempre il nome risolto o l'UUID come fallback */}
                                         {file.ownerName || file.owner}
                                     </small>
                                 </td>
@@ -644,6 +686,7 @@ function FileBrowser({ onStartVersionUpdate, currentUser }) {
                 show={!!aiModalFile}
                 onHide={() => setAiModalFile(null)}
                 file={aiModalFile}
+                onRetryAi={handleRetryAi}
             />
 
             <RagChatModal
