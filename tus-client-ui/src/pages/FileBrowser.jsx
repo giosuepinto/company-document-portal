@@ -1,25 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { Badge, Card, Table, Alert, Spinner, Button, Pagination, Modal, InputGroup, Form } from 'react-bootstrap';
 import {
-    Download,
-    Upload,
-    Trash,
-    Share,
-    ChevronDown,
-    ChevronRight,
-    FileEarmark,
-    PencilSquare,
-    ArrowCounterclockwise,
-    InfoCircle,
-    ShieldLock,
-    ShieldCheck,
-    ChatDots
+    Download, Upload, Trash, Share, ChevronDown, ChevronRight, FileEarmark,
+    PencilSquare, ArrowCounterclockwise, InfoCircle, ShieldLock, ShieldCheck, ChatDots
 } from 'react-bootstrap-icons';
 import axios from 'axios';
 import { API_BASE_URL } from '../utils/config';
 import { formatBytes, formatDate } from '../utils/utils.js';
 import RagChatModal from '../pages/RagChatModal';
-import { ExclamationCircle } from 'react-bootstrap-icons';
 
 // --- HELPER: ICON OR PREVIEW ---
 const FileIconOrPreview = ({ file }) => {
@@ -43,19 +31,50 @@ const FileIconOrPreview = ({ file }) => {
 // --- HELPER: FULL PREVIEW MODAL ---
 const FilePreviewModal = ({ show, onHide, file }) => {
     const [textContent, setTextContent] = useState(null);
+    const [pdfBlobUrl, setPdfBlobUrl] = useState(null); // NUOVO STATO PER IL PDF
     const [loading, setLoading] = useState(false);
+
     const fileUrl = file ? `${API_BASE_URL}/files/${file.id}/download?action=view` : '';
 
     useEffect(() => {
-        if (show && file && file.contentType.startsWith('text/')) {
+        // Reset degli stati quando si chiude la modale o cambia il file
+        if (!show || !file) {
+            setTextContent(null);
+            setPdfBlobUrl(null);
+            return;
+        }
+
+        if (file.contentType.startsWith('text/')) {
             setLoading(true);
             axios.get(fileUrl, { responseType: 'text' })
                 .then(res => setTextContent(res.data.slice(0, 2000) + (res.data.length > 2000 ? '\n... (truncated)' : '')))
                 .catch(() => setTextContent("Error loading text preview"))
                 .finally(() => setLoading(false));
+
+        } else if (file.contentType === 'application/pdf') {
+            // FIX PDF: Scarica il binario con il token e crea un URL locale
+            setLoading(true);
+            axios.get(fileUrl, { responseType: 'blob' })
+                .then(res => {
+                    const url = URL.createObjectURL(res.data);
+                    setPdfBlobUrl(url);
+                })
+                .catch((err) => {
+                    console.error("Error loading PDF preview", err);
+                    setPdfBlobUrl(null);
+                })
+                .finally(() => setLoading(false));
         } else {
             setTextContent(null);
         }
+
+        // Cleanup: Rilascia la memoria dell'URL quando il componente si smonta
+        return () => {
+            if (pdfBlobUrl) {
+                URL.revokeObjectURL(pdfBlobUrl);
+            }
+        };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [show, file, fileUrl]);
 
     if (!file) return null;
@@ -76,8 +95,17 @@ const FilePreviewModal = ({ show, onHide, file }) => {
                     <img src={fileUrl} alt="Preview" style={{ maxWidth: '100%', maxHeight: '70vh' }} />
                 )}
 
-                {!loading && isPdf && (
-                    <iframe src={fileUrl + "#toolbar=0"} title="PDF" width="100%" height="500px" style={{ border: 'none' }} />
+                {/* VISUALIZZAZIONE PDF TRAMITE BLOB URL */}
+                {!loading && isPdf && pdfBlobUrl && (
+                    <iframe src={pdfBlobUrl + "#toolbar=0"} title="PDF" width="100%" height="500px" style={{ border: 'none' }} />
+                )}
+
+                {/* FALLBACK IN CASO DI ERRORE DI CARICAMENTO DEL PDF */}
+                {!loading && isPdf && !pdfBlobUrl && (
+                    <div className="text-center">
+                        <p className="text-danger">Failed to load PDF preview.</p>
+                        <Button variant="primary" href={fileUrl} target="_blank">Download to View</Button>
+                    </div>
                 )}
 
                 {!loading && isText && (
