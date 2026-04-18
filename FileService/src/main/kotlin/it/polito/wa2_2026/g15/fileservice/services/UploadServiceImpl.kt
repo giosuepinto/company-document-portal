@@ -139,6 +139,37 @@ class UploadServiceImpl(
         throw PermissionDeniedException("Write Access Denied for user ${user.id}")
     }
 
+
+    override fun checkWritePermissionString(file: File) : String {
+        val user = securityUtils.getCurrentUser()
+
+        // 1. Admin & Owner
+        if (user.isAdmin()) return "ADMIN"
+        if (file.owner == user.id) return "OWNER"
+
+        // 2. Explicit WRITE Share
+        val hasWriteShare = file.sharingRules.any {
+            it.sharedWithUserId == user.id && it.permission == SharePermission.WRITE
+        }
+        if (hasWriteShare) return "WRITE"
+
+        // 3. Manager Department Access
+        if (user.isManager()) {
+            val userDetails = userClient.getUserDetails(user.id)
+            val fileOwnerDetails = file.owner?.let { userClient.getUserDetails(it) }
+
+
+            if (userDetails?.department != null &&
+                fileOwnerDetails?.department != null &&
+                userDetails.department == fileOwnerDetails.department) {
+                return "WRITE"
+            }
+        }
+
+        return "READ"
+    }
+
+
     // --- TUS HELPERS ---
     private fun parseMetadata(base64Metadata: String?): Map<String, String> {
         if (base64Metadata.isNullOrBlank()) return emptyMap()

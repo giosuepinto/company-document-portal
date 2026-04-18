@@ -180,21 +180,12 @@ class FileController(
 
         // Call Service (ACL Filtering inside)
         val filePage = uploadService.getPersistentFiles(ownerUuid, pageable)
-        val currentUser = securityUtils.getCurrentUser() // Serve per calcolare i permessi
 
         val dtoPage = filePage.map { file ->
             val latestVersion = file.versions.maxByOrNull { it.updatedAt }
 
             // --- CALCOLO PERMESSI ---
-            val perm = when {
-                currentUser.isAdmin() -> "ADMIN" // Tutto
-                file.owner == currentUser.id -> "OWNER" // Tutto
-                // Controllo Share Esplicite
-                file.sharingRules.any { it.sharedWithUserId == currentUser.id && it.permission == SharePermission.WRITE } -> "WRITE"
-                // Controllo Dipartimento (Manager = Write, Staff = Read) -> Qui semplifichiamo, se è arrivato qui tramite query dipartimento:
-                currentUser.isManager() && file.owner != currentUser.id -> "WRITE" // Assumiamo Manager scriva su tutto il dipartimento
-                else -> "READ" // Default (es. Staff su file di dipartimento o Share Read)
-            }
+            val perm = uploadService.checkWritePermissionString(file)
             // ------------------------
 
             FileMetadataDTO(

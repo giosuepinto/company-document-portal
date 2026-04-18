@@ -272,7 +272,7 @@ function FileBrowser({ onStartVersionUpdate, currentUser }) {
 
             await Promise.all(uniqueOwnerIds.map(async (id) => {
                 try {
-                    const userRes = await axios.get(`${API_BASE_URL}/users/${id}`);
+                    const userRes = await axios.get(`${API_BASE_URL}/users/by-id-short/${id}`);
                     ownerMap[id] = userRes.data.fullName || userRes.data.email;
                 } catch (e) {
                     ownerMap[id] = id; // Fallback all'UUID se non trovato
@@ -383,7 +383,7 @@ function FileBrowser({ onStartVersionUpdate, currentUser }) {
             const response = await axios.get(`${API_BASE_URL}/files/${file.id}/shares`);
             const sharesWithDetails = await Promise.all(response.data.map(async (share) => {
                 try {
-                    const userRes = await axios.get(`${API_BASE_URL}/users/${share.sharedWithUserId}`);
+                    const userRes = await axios.get(`${API_BASE_URL}/users/by-id-short/${share.sharedWithUserId}`);
                     return { ...share, email: userRes.data.email, name: userRes.data.fullName };
                 } catch {
                     return share;

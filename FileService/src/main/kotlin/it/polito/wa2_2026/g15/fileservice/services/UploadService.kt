@@ -52,4 +52,6 @@ interface UploadService {
     fun getAllAllowedFileIds(userId: UUID): List<UUID>
 
     fun triggerAiRetry(fileId: UUID)
+
+    fun checkWritePermissionString(file: File): String
 }

@@ -22,6 +22,14 @@ fun User.toDTO(): UserDTO {
     )
 }
 
+fun User.toShortDTO(): UserShortDTO {
+    return UserShortDTO(
+        id = this.id!!, // L'ID viene generato al save, quindi è sicuro (se save è andato a buon fine)
+        fullName = this.fullName,
+        email = this.email,
+    )
+}
+
 fun UserRequestDTO.toEntity(): User {
     val user = User()
 

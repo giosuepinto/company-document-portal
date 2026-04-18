@@ -7,6 +7,7 @@ import io.swagger.v3.oas.annotations.responses.ApiResponses
 import io.swagger.v3.oas.annotations.tags.Tag
 import it.polito.wa2.lab03.userdetailservice.dto.UserDTO
 import it.polito.wa2.lab03.userdetailservice.dto.UserRequestDTO
+import it.polito.wa2.lab03.userdetailservice.dto.UserShortDTO
 import it.polito.wa2.lab03.userdetailservice.dto.UserUpdateDTO
 import it.polito.wa2.lab03.userdetailservice.services.UserService
 import org.slf4j.LoggerFactory
@@ -78,6 +79,16 @@ class UserController(
         ApiResponse(responseCode = "200", description = "User found"),
         ApiResponse(responseCode = "404", description = "User not found")
     ])
+    @GetMapping("/by-id-short/{id}")
+    @PreAuthorize("hasAnyRole('admin', 'manager', 'staff','service-account')") // RBAC
+    fun getUserbyIdShort(
+        @Parameter(description = "just get the name of the user")
+        @PathVariable id: UUID
+    ): UserShortDTO {
+        logger.info("REST: Request to find user by id, short: {}", id)
+        return userService.getUserByIdShort(id)
+    }
+
     @GetMapping("/by-email/{email}")
     @PreAuthorize("hasAnyRole('admin', 'manager', 'staff')") // RBAC
     fun getUserByEmail(

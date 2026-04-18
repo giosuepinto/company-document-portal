@@ -2,9 +2,11 @@ package it.polito.wa2.lab03.userdetailservice.services
 
 import it.polito.wa2.lab03.userdetailservice.dto.UserDTO
 import it.polito.wa2.lab03.userdetailservice.dto.UserRequestDTO
+import it.polito.wa2.lab03.userdetailservice.dto.UserShortDTO
 import it.polito.wa2.lab03.userdetailservice.dto.UserUpdateDTO
 import it.polito.wa2.lab03.userdetailservice.dto.toDTO
 import it.polito.wa2.lab03.userdetailservice.dto.toEntity
+import it.polito.wa2.lab03.userdetailservice.dto.toShortDTO
 import it.polito.wa2.lab03.userdetailservice.entities.Role
 import it.polito.wa2.lab03.userdetailservice.entities.User
 import it.polito.wa2.lab03.userdetailservice.exceptions.DuplicateEmailException
@@ -51,6 +53,23 @@ class UserService(
 
         return user.toDTO()
     }
+
+    /**
+     * Retrieves a specific user by ID short.
+     */
+    @Transactional(readOnly = true)
+    fun getUserByIdShort(id: UUID): UserShortDTO {
+        logger.debug("Fetching user by ID short: {}", id)
+
+        val user = userRepository.findById(id)
+            .orElseThrow {
+                logger.warn("User lookup failed: ID {} not found", id)
+                UserNotFoundException(id)
+            }
+
+        return user.toShortDTO()
+    }
+
 
     /**
      * Retrieves the authenticated user.
