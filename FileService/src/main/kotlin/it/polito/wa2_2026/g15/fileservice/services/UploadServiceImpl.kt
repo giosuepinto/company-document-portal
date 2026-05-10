@@ -470,7 +470,9 @@ class UploadServiceImpl(
         val user = securityUtils.getCurrentUser()
         if (!user.isAdmin() && file.owner != user.id) throw PermissionDeniedException("Denied")
         file.versions.forEach {
-            try { if (it.minioObjectKey.isNotEmpty()) storageService.deleteObject(bucketName, it.minioObjectKey) } catch (_: Exception) {}
+            try { if (it.minioObjectKey.isNotEmpty()) storageService.deleteObject(bucketName, it.minioObjectKey)
+                it.previewMinioKey?.let { previewKey -> storageService.deleteObject(bucketName, previewKey) }
+            } catch (_: Exception) {}
         }
         fileRepository.delete(file)
     }

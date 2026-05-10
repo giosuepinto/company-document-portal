@@ -144,7 +144,7 @@ function App() {
         <div className="bg-light min-vh-100 pb-5">
             <Navbar bg="dark" variant="dark" expand="lg" className="mb-4 shadow-sm">
                 <Container>
-                    <Navbar.Brand as={Link} to="/">File System (Lab 04)</Navbar.Brand>
+                    <Navbar.Brand as={Link} to="/">File System</Navbar.Brand>
                     <Navbar.Toggle aria-controls="basic-navbar-nav" />
                     <Navbar.Collapse id="basic-navbar-nav">
                         <Nav className="me-auto">
